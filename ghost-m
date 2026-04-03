@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# ghost-m v1.0 - Set window opacity and always-on-top for X11
+
+CONFIG_DIR="$HOME/.config/ghost-m"
+PRESET_DIR="$CONFIG_DIR/presets"
+
+check_deps() {
+    for cmd in wmctrl xdotool xprop; do
+        if ! command -v "$cmd" &>/dev/null; then
+            echo "Missing: $cmd"
+            echo "Install: sudo apt install wmctrl xdotool x11-utils"
+            exit 1
+        fi
+    done
+}
+
+get_window_by_click() {
+    echo "Click on a window..." >&2
+    xdotool selectwindow 2>/dev/null
+}
+
+get_window_by_title() {
+    xdotool search --name "$1" 2>/dev/null | head -1
+}
+
+get_window_by_class() {
+    xdotool search --class "$1" 2>/dev/null | head -1
+}
+
+get_window() {
+    local method="$1"
+    local value="$2"
+
+    case "$method" in
+        click) get_window_by_click ;;
+        title) get_window_by_title "$value" ;;
+        class) get_window_by_class "$value" ;;
+        id) echo "$value" ;;
+        *) get_window_by_click ;;
+    esac
+}
+
+set_opacity() {
+    local win_id="$1"
+    local percent="$2"
+
+    if [ -z "$win_id" ]; then
+        echo "No window selected"
+        return 1
+    fi
+
+    # Clamp 0-100
+    if [ "$percent" -lt 0 ]; then percent=0; fi
+    if [ "$percent" -gt 100 ]; then percent=100; fi
+
+    # Special case: 100% opacity = fully opaque
+    if [ "$percent" -eq 100 ]; then
+        local hex="0xffffffff"
+    else
+        # Convert to hex (0xFFFFFFFF = opaque)
+        local hex
+        hex=$(printf "0x%08x" $((percent * 4294967295 / 100)))
+    fi
+
+    if xprop -id "$win_id" -f _NET_WM_WINDOW_OPACITY 32c \
+        -set _NET_WM_WINDOW_OPACITY "$hex" 2>/dev/null; then
+        echo "Opacity set to ${percent}%"
+        return 0
+    else
+        echo "Failed to set opacity"
+        return 1
+    fi
+}
+
+toggle_ontop() {
+    local win_id="$1"
+
+    if [ -z "$win_id" ]; then
+        echo "No window selected"
+        return 1
+    fi
+
+    if xprop -id "$win_id" _NET_WM_STATE 2>/dev/null \
+        | grep -q "_NET_WM_STATE_ABOVE"; then
+        wmctrl -ir "$win_id" -b remove,above
+        echo "Always-on-top: OFF"
+    else
+        wmctrl -ir "$win_id" -b add,above
+        echo "Always-on-top: ON"
+    fi
+}
+
+clear_window() {
+    local win_id="$1"
+
+    if [ -z "$win_id" ]; then
+        echo "No window selected"
+        return 1
+    fi
+
+    set_opacity "$win_id" 100
+    wmctrl -ir "$win_id" -b remove,above
+    echo "Window cleared (opacity 100%, ontop OFF)"
+}
+
+save_preset() {
+    local name="$1"
+    local win_id="$2"
+
+    mkdir -p "$PRESET_DIR"
+
+    local title class opacity ontop
+    title=$(xdotool getwindowname "$win_id" 2>/dev/null)
+    class=$(xprop -id "$win_id" WM_CLASS 2>/dev/null | cut -d'"' -f2)
+    opacity=$(xprop -id "$win_id" _NET_WM_WINDOW_OPACITY 2>/dev/null \
+        | awk '{print $3}')
+    ontop=$(xprop -id "$win_id" _NET_WM_STATE 2>/dev/null \
+        | grep -q "_NET_WM_STATE_ABOVE" && echo "true" || echo "false")
+
+    cat > "$PRESET_DIR/$name" << PRESET_EOF
+TITLE="$title"
+CLASS="$class"
+OPACITY="$opacity"
+ONTOP="$ontop"
+PRESET_EOF
+
+    echo "Preset saved: $name"
+}
+
+load_preset() {
+    local name="$1"
+    local preset_file="$PRESET_DIR/$name"
+
+    if [ ! -f "$preset_file" ]; then
+        echo "Preset not found: $name"
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "$preset_file"
+
+    # Find window by class then title
+    local win_id
+    win_id=$(get_window_by_class "$CLASS")
+    if [ -z "$win_id" ]; then
+        win_id=$(get_window_by_title "$TITLE")
+    fi
+
+    if [ -z "$win_id" ]; then
+        echo "Window not found for preset: $name"
+        return 1
+    fi
+
+    # Apply opacity
+    if [ -n "$OPACITY" ] && [ "$OPACITY" != "0xffffffff" ]; then
+        xprop -id "$win_id" -f _NET_WM_WINDOW_OPACITY 32c \
+            -set _NET_WM_WINDOW_OPACITY "$OPACITY"
+        echo "Opacity applied"
+    fi
+
+    # Apply ontop
+    if [ "$ONTOP" = "true" ]; then
+        wmctrl -ir "$win_id" -b add,above
+        echo "Always-on-top: ON"
+    fi
+
+    echo "Preset loaded: $name"
+}
+
+list_presets() {
+    if [ -d "$PRESET_DIR" ]; then
+        ls -1 "$PRESET_DIR" 2>/dev/null | sed 's/^/  /'
+    else
+        echo "No presets found"
+    fi
+}
+
+show_help() {
+    cat << HELP
+ghost-m v1.0 - Set opacity and always on top for any X11 window
+
+USAGE:
+  ghost-m opacity <0-100> [--click|--title <name>|--class <name>]
+  ghost-m ontop [--click|--title <name>|--class <name>]
+  ghost-m clear [--click|--title <name>|--class <name>]
+  ghost-m preset save <name> [--click|--title <name>|--class <name>]
+  ghost-m preset load <name>
+  ghost-m preset list
+  ghost-m help
+  ghost-m version
+
+EXAMPLES:
+  ghost-m opacity 70 --title "Chat:"
+  ghost-m ontop --class "firefox"
+  ghost-m opacity 50 --click
+  ghost-m clear --click
+  ghost-m preset save mychat --title "Chat:"
+  ghost-m preset load mychat
+HELP
+}
+
+show_version() {
+    echo "ghost-m v1.0"
+    echo "Set window opacity and always on top for X11"
+}
+
+# Main
+check_deps
+
+# Show help when no arguments are provided
+if [ $# -eq 0 ]; then
+    show_help
+    exit 0
+fi
+
+CMD="$1"
+shift
+
+case "$CMD" in
+    opacity)
+        PERCENT="$1"
+        shift
+        METHOD="click"
+        VALUE=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --click) METHOD="click" ;;
+                --title) METHOD="title"; VALUE="$2"; shift ;;
+                --class) METHOD="class"; VALUE="$2"; shift ;;
+            esac
+            shift
+        done
+        WIN_ID=$(get_window "$METHOD" "$VALUE")
+        set_opacity "$WIN_ID" "$PERCENT"
+        ;;
+    ontop)
+        METHOD="click"
+        VALUE=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --click) METHOD="click" ;;
+                --title) METHOD="title"; VALUE="$2"; shift ;;
+                --class) METHOD="class"; VALUE="$2"; shift ;;
+            esac
+            shift
+        done
+        WIN_ID=$(get_window "$METHOD" "$VALUE")
+        toggle_ontop "$WIN_ID"
+        ;;
+    clear)
+        METHOD="click"
+        VALUE=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --click) METHOD="click" ;;
+                --title) METHOD="title"; VALUE="$2"; shift ;;
+                --class) METHOD="class"; VALUE="$2"; shift ;;
+            esac
+            shift
+        done
+        WIN_ID=$(get_window "$METHOD" "$VALUE")
+        clear_window "$WIN_ID"
+        ;;
+    preset)
+        SUB="$1"
+        shift
+        case "$SUB" in
+            save)
+                NAME="$1"
+                shift
+                METHOD="click"
+                VALUE=""
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        --click) METHOD="click" ;;
+                        --title) METHOD="title"; VALUE="$2"; shift ;;
+                        --class) METHOD="class"; VALUE="$2"; shift ;;
+                    esac
+                    shift
+                done
+                WIN_ID=$(get_window "$METHOD" "$VALUE")
+                save_preset "$NAME" "$WIN_ID"
+                ;;
+            load)
+                NAME="$1"
+                load_preset "$NAME"
+                ;;
+            list)
+                list_presets
+                ;;
+            *) echo "Unknown: preset $SUB"; show_help ;;
+        esac
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    version|--version|-v)
+        show_version
+        ;;
+    *)
+        echo "Unknown: $CMD"
+        show_help
+        ;;
+esac
