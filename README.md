@@ -47,7 +47,7 @@ sudo apt install wmctrl xdotool x11-utils
 
       Type in terminal: ghost-m COMMAND [arguments]
 
-**Commands**
+## Commands
 
 | Command | Description |
 |---------|-------------|
@@ -88,14 +88,14 @@ ghost-m preset load mychat
 
 Presets are saved to ~/.config/ghost-m/presets/
 
-###Opacity doesn't work on some windows
+## Opacity doesn't work on some windows
 Some applications (certain games or hardware-accelerated windows) ignore opacity requests. 
 
-##Uninstall
+## Uninstall
 Delete `ghost-m` from `~/.local/bin`
 Delete `~/.config/ghost-m`
 
-##Known bugs
+## Known bugs
 
 When setting always on top and then starting a full-screen application mouse input will be locked between them;this is a known muffin bug when using Linux Cinnamon. To correct alt + tab into fullscreen app and always on top window or start fullscreen application first and then set always on top window.
 
