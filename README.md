@@ -1,5 +1,5 @@
 # ghost-m
-**Set opacity and always-on-top for any X11 window**
+**Set opacity and always on top for any X11 window**
 
 `ghost-m` is a lightweight command-line tool that lets you make any window transparent and/or always on top by just clicking on them! Made for Muffin but works for any X11-based desktop
 
