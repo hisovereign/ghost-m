@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ghost-m v1.0 - Set window opacity and always-on-top for X11
+# ghost-m v1.0 - Set window opacity and always on top for X11
 
 CONFIG_DIR="$HOME/.config/ghost-m"
 PRESET_DIR="$CONFIG_DIR/presets"
