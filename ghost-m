@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# ghost-m v1.0 - Set window opacity and always on top for X11
+# ghost-m v1.1 - Set window opacity and always on top for X11
 
 CONFIG_DIR="$HOME/.config/ghost-m"
 PRESET_DIR="$CONFIG_DIR/presets"
+TRACKING_FILE="$CONFIG_DIR/modified-windows"
 
 check_deps() {
     for cmd in wmctrl xdotool xprop; do
@@ -40,6 +41,63 @@ get_window() {
     esac
 }
 
+# Track modified windows
+track_window() {
+    local win_id="$1"
+    local win_name="$2"
+    
+    if [ -z "$win_id" ]; then
+        return
+    fi
+    
+    mkdir -p "$CONFIG_DIR"
+    
+    # Create or update tracking file
+    local temp_file=$(mktemp)
+    local found=false
+    
+    if [ -f "$TRACKING_FILE" ]; then
+        while IFS='|' read -r id name; do
+            if [ "$id" = "$win_id" ]; then
+                echo "$win_id|$win_name" >> "$temp_file"
+                found=true
+            else
+                echo "$id|$name" >> "$temp_file"
+            fi
+        done < "$TRACKING_FILE"
+    fi
+    
+    if [ "$found" = false ]; then
+        echo "$win_id|$win_name" >> "$temp_file"
+    fi
+    
+    mv "$temp_file" "$TRACKING_FILE"
+}
+
+# Untrack window (when cleared)
+untrack_window() {
+    local win_id="$1"
+    
+    if [ ! -f "$TRACKING_FILE" ]; then
+        return
+    fi
+    
+    local temp_file=$(mktemp)
+    
+    while IFS='|' read -r id name; do
+        if [ "$id" != "$win_id" ]; then
+            echo "$id|$name" >> "$temp_file"
+        fi
+    done < "$TRACKING_FILE"
+    
+    mv "$temp_file" "$TRACKING_FILE"
+    
+    # Remove file if empty
+    if [ ! -s "$TRACKING_FILE" ]; then
+        rm -f "$TRACKING_FILE"
+    fi
+}
+
 set_opacity() {
     local win_id="$1"
     local percent="$2"
@@ -65,6 +123,15 @@ set_opacity() {
     if xprop -id "$win_id" -f _NET_WM_WINDOW_OPACITY 32c \
         -set _NET_WM_WINDOW_OPACITY "$hex" 2>/dev/null; then
         echo "Opacity set to ${percent}%"
+        
+        # Track window if opacity is less than 100%
+        if [ "$percent" -lt 100 ]; then
+            local win_name
+            win_name=$(xdotool getwindowname "$win_id" 2>/dev/null | head -c 100)
+            track_window "$win_id" "$win_name"
+        else
+            untrack_window "$win_id"
+        fi
         return 0
     else
         echo "Failed to set opacity"
@@ -87,6 +154,10 @@ toggle_ontop() {
     else
         wmctrl -ir "$win_id" -b add,above
         echo "Always-on-top: ON"
+        # Track window when ontop is enabled
+        local win_name
+        win_name=$(xdotool getwindowname "$win_id" 2>/dev/null | head -c 100)
+        track_window "$win_id" "$win_name"
     fi
 }
 
@@ -100,7 +171,44 @@ clear_window() {
 
     set_opacity "$win_id" 100
     wmctrl -ir "$win_id" -b remove,above
+    untrack_window "$win_id"
     echo "Window cleared (opacity 100%, ontop OFF)"
+}
+
+clear_all_windows() {
+    if [ ! -f "$TRACKING_FILE" ]; then
+        echo "No tracked windows found"
+        return 0
+    fi
+    
+    local count=0
+    local temp_file=$(mktemp)
+    
+    while IFS='|' read -r win_id win_name; do
+        if [ -n "$win_id" ]; then
+            # Clear the window
+            set_opacity "$win_id" 100 2>/dev/null
+            wmctrl -ir "$win_id" -b remove,above 2>/dev/null
+            ((count++))
+        fi
+    done < "$TRACKING_FILE"
+    
+    # Remove tracking file
+    rm -f "$TRACKING_FILE"
+    
+    echo "Cleared $count windows"
+}
+
+list_tracked() {
+    if [ ! -f "$TRACKING_FILE" ]; then
+        echo "No tracked windows"
+        return 0
+    fi
+    
+    echo "Tracked windows:"
+    while IFS='|' read -r win_id win_name; do
+        echo "  $win_id: $win_name"
+    done < "$TRACKING_FILE"
 }
 
 save_preset() {
@@ -156,12 +264,14 @@ load_preset() {
         xprop -id "$win_id" -f _NET_WM_WINDOW_OPACITY 32c \
             -set _NET_WM_WINDOW_OPACITY "$OPACITY"
         echo "Opacity applied"
+        track_window "$win_id" "$TITLE"
     fi
 
     # Apply ontop
     if [ "$ONTOP" = "true" ]; then
         wmctrl -ir "$win_id" -b add,above
         echo "Always-on-top: ON"
+        track_window "$win_id" "$TITLE"
     fi
 
     echo "Preset loaded: $name"
@@ -177,12 +287,14 @@ list_presets() {
 
 show_help() {
     cat << HELP
-ghost-m v1.0 - Set opacity and always on top for any X11 window
+ghost-m v1.1 - Set opacity and always-on-top for any X11 window
 
 USAGE:
   ghost-m opacity <0-100> [--click|--title <name>|--class <name>]
   ghost-m ontop [--click|--title <name>|--class <name>]
   ghost-m clear [--click|--title <name>|--class <name>]
+  ghost-m clear-all
+  ghost-m list-tracked
   ghost-m preset save <name> [--click|--title <name>|--class <name>]
   ghost-m preset load <name>
   ghost-m preset list
@@ -194,13 +306,15 @@ EXAMPLES:
   ghost-m ontop --class "firefox"
   ghost-m opacity 50 --click
   ghost-m clear --click
+  ghost-m clear-all
+  ghost-m list-tracked
   ghost-m preset save mychat --title "Chat:"
   ghost-m preset load mychat
 HELP
 }
 
 show_version() {
-    echo "ghost-m v1.0"
+    echo "ghost-m v1.1"
     echo "Set window opacity and always on top for X11"
 }
 
@@ -260,6 +374,12 @@ case "$CMD" in
         done
         WIN_ID=$(get_window "$METHOD" "$VALUE")
         clear_window "$WIN_ID"
+        ;;
+    clear-all)
+        clear_all_windows
+        ;;
+    list-tracked)
+        list_tracked
         ;;
     preset)
         SUB="$1"
