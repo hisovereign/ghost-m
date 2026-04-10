@@ -95,6 +95,15 @@ Some applications (certain games or hardware-accelerated windows) ignore opacity
 Delete `ghost-m` from `~/.local/bin`
 Delete `~/.config/ghost-m`
 
+## ghost-m cinnamon applet installation
+
+Copy the ghost-m@hisovereign folder and place it in ~/.local/share/cinnamon/applets
+
+-Create a new folder in ~/.local/share/cinnamon/applets and name it ghost-m@hisovereign
+-download the applet.js and metadata.json and palce it in folder you made
+-restart cinnamon (alt + F2, type r then hit enter) or restart pc
+-Right-click on panel > click on applets> add ghost-m applet to panel
+
 ## Known bugs
 
 When setting always on top and then starting a full-screen application mouse input will be locked between them;this is a known muffin bug when using Linux Cinnamon. To correct alt + tab into fullscreen app and always on top window or start fullscreen application first and then set always on top window.
