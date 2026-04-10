@@ -100,8 +100,11 @@ Delete `~/.config/ghost-m`
 Copy the ghost-m@hisovereign folder and place it in ~/.local/share/cinnamon/applets
 
 -Create a new folder in ~/.local/share/cinnamon/applets and name it ghost-m@hisovereign
+
 -download the applet.js and metadata.json and palce it in folder you made
+
 -restart cinnamon (alt + F2, type r then hit enter) or restart pc
+
 -Right-click on panel > click on applets> add ghost-m applet to panel
 
 ## Known bugs
