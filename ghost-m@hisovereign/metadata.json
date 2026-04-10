@@ -1,0 +1,10 @@
+{
+  "uuid": "ghost-m@hisovereign",
+  "name": "Ghost-m",
+  "description": "Set opacity and always-on-top for any window with one click",
+  "icon": "ghost-symbolic",
+  "max-instances": 1,
+  "version": "1.0",
+  "author": "hisovereign",
+  "last-edited": 1775864899
+}
