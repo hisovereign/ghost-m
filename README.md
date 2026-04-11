@@ -107,6 +107,7 @@ Copy the ghost-m@hisovereign folder and place it in ~/.local/share/cinnamon/appl
 
 -Right-click on panel > click on applets> add ghost-m applet to panel
 
+-demo https://youtu.be/eYnwDRxlMFs
 ## Known bugs
 
 When setting always on top and then starting a full-screen application mouse input will be locked between them;this is a known muffin bug when using Linux Cinnamon. To correct alt + tab into fullscreen app and always on top window or start fullscreen application first and then set always on top window.
