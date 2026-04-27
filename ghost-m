@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# ghost-m v1.1 - Set window opacity and always on top for X11
+# ghost-m v1.2 - Set window opacity and always on top for X11
+# Security: preset files are shell-escaped to prevent injection.
+# Concurrency: tracking file writes are protected by flock.
 
 CONFIG_DIR="$HOME/.config/ghost-m"
 PRESET_DIR="$CONFIG_DIR/presets"
 TRACKING_FILE="$CONFIG_DIR/modified-windows"
+TRACKING_LOCK="$CONFIG_DIR/.tracking.lock"
 
 check_deps() {
     for cmd in wmctrl xdotool xprop; do
@@ -41,21 +44,34 @@ get_window() {
     esac
 }
 
-# Track modified windows
+# ---------- Tracking file helpers (locked) ----------
+
+# Acquire lock on tracking file; fd 100 used for flock
+tracking_lock() {
+    mkdir -p "$CONFIG_DIR"
+    touch "$TRACKING_LOCK"
+    exec 100>"$TRACKING_LOCK" || return 1
+    flock -x 100
+}
+
+# Release lock
+tracking_unlock() {
+    flock -u 100 2>/dev/null
+    exec 100>&-
+}
+
+# Track a modified window (write with lock)
 track_window() {
     local win_id="$1"
     local win_name="$2"
     
-    if [ -z "$win_id" ]; then
-        return
-    fi
-    
-    mkdir -p "$CONFIG_DIR"
-    
-    # Create or update tracking file
+    [ -z "$win_id" ] && return
+
+    tracking_lock || return 1
+
     local temp_file=$(mktemp)
     local found=false
-    
+
     if [ -f "$TRACKING_FILE" ]; then
         while IFS='|' read -r id name; do
             if [ "$id" = "$win_id" ]; then
@@ -66,37 +82,41 @@ track_window() {
             fi
         done < "$TRACKING_FILE"
     fi
-    
-    if [ "$found" = false ]; then
-        echo "$win_id|$win_name" >> "$temp_file"
-    fi
-    
+
+    [ "$found" = false ] && echo "$win_id|$win_name" >> "$temp_file"
+
     mv "$temp_file" "$TRACKING_FILE"
+    tracking_unlock
 }
 
-# Untrack window (when cleared)
+# Untrack a window (write with lock)
 untrack_window() {
     local win_id="$1"
-    
+
+    tracking_lock || return 1
+
     if [ ! -f "$TRACKING_FILE" ]; then
+        tracking_unlock
         return
     fi
-    
+
     local temp_file=$(mktemp)
-    
+
     while IFS='|' read -r id name; do
-        if [ "$id" != "$win_id" ]; then
-            echo "$id|$name" >> "$temp_file"
-        fi
+        [ "$id" != "$win_id" ] && echo "$id|$name" >> "$temp_file"
     done < "$TRACKING_FILE"
-    
+
     mv "$temp_file" "$TRACKING_FILE"
-    
+
     # Remove file if empty
     if [ ! -s "$TRACKING_FILE" ]; then
         rm -f "$TRACKING_FILE"
     fi
+
+    tracking_unlock
 }
+
+# ---------- Core actions ----------
 
 set_opacity() {
     local win_id="$1"
@@ -108,14 +128,13 @@ set_opacity() {
     fi
 
     # Clamp 0-100
-    if [ "$percent" -lt 0 ]; then percent=0; fi
-    if [ "$percent" -gt 100 ]; then percent=100; fi
+    [ "$percent" -lt 0 ] && percent=0
+    [ "$percent" -gt 100 ] && percent=100
 
     # Special case: 100% opacity = fully opaque
     if [ "$percent" -eq 100 ]; then
         local hex="0xffffffff"
     else
-        # Convert to hex (0xFFFFFFFF = opaque)
         local hex
         hex=$(printf "0x%08x" $((percent * 4294967295 / 100)))
     fi
@@ -176,8 +195,11 @@ clear_window() {
 }
 
 clear_all_windows() {
+    tracking_lock || return 1
+
     if [ ! -f "$TRACKING_FILE" ]; then
         echo "No tracked windows found"
+        tracking_unlock
         return 0
     fi
     
@@ -195,11 +217,13 @@ clear_all_windows() {
     
     # Remove tracking file
     rm -f "$TRACKING_FILE"
+    tracking_unlock
     
     echo "Cleared $count windows"
 }
 
 list_tracked() {
+    # No lock for read-only, acceptable slight inconsistency
     if [ ! -f "$TRACKING_FILE" ]; then
         echo "No tracked windows"
         return 0
@@ -210,6 +234,8 @@ list_tracked() {
         echo "  $win_id: $win_name"
     done < "$TRACKING_FILE"
 }
+
+# ---------- Preset management (with escape) ----------
 
 save_preset() {
     local name="$1"
@@ -225,9 +251,14 @@ save_preset() {
     ontop=$(xprop -id "$win_id" _NET_WM_STATE 2>/dev/null \
         | grep -q "_NET_WM_STATE_ABOVE" && echo "true" || echo "false")
 
+    # Escape title and class to prevent injection when sourced later
+    local title_escaped class_escaped
+    title_escaped=$(printf '%q' "$title")
+    class_escaped=$(printf '%q' "$class")
+
     cat > "$PRESET_DIR/$name" << PRESET_EOF
-TITLE="$title"
-CLASS="$class"
+TITLE=$title_escaped
+CLASS=$class_escaped
 OPACITY="$opacity"
 ONTOP="$ontop"
 PRESET_EOF
@@ -287,7 +318,7 @@ list_presets() {
 
 show_help() {
     cat << HELP
-ghost-m v1.1 - Set opacity and always-on-top for any X11 window
+ghost-m v1.2 - Set opacity and always-on-top for any X11 window
 
 USAGE:
   ghost-m opacity <0-100> [--click|--title <name>|--class <name>]
@@ -308,13 +339,13 @@ EXAMPLES:
   ghost-m clear --click
   ghost-m clear-all
   ghost-m list-tracked
-  ghost-m preset save mychat --title "Chat:"
+  ghost-m preset save mychat --click
   ghost-m preset load mychat
 HELP
 }
 
 show_version() {
-    echo "ghost-m v1.1"
+    echo "ghost-m v1.2"
     echo "Set window opacity and always on top for X11"
 }
 
